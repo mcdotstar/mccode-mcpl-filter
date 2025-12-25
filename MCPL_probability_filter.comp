@@ -13,7 +13,19 @@
 */
 
 DEFINE COMPONENT MCPL_probability_filter
-SETTING PARAMETERS (distance, xmin=UNSET, xmax=UNSET, ymin=UNSET, ymax=UNSET, radius=UNSET, xwidth=UNSET, yheight=UNSET, accept=0.)
+SETTING PARAMETERS (
+distance, 
+xmin=UNSET, 
+xmax=UNSET, 
+ymin=UNSET, 
+ymax=UNSET, 
+radius=UNSET, 
+xwidth=UNSET, 
+yheight=UNSET, 
+pmin=UNSET,
+pmax=UNSET,
+accept=0.
+)
 OUTPUT PARAMETERS ()
 SHARE
 %{
@@ -31,6 +43,7 @@ void mcpl_filter_warn_if(int condition, char* msg, char* comp){
 
 DECLARE %{
   char isradial;
+  int p_flag;
 %}
 INITIALIZE
 %{
@@ -61,32 +74,22 @@ if (is_unset(radius)){
                        "specify radius OR width and height parameters", NAME_CURRENT_COMP);
   mcpl_filter_warn_if(radius == 0., "No in-area, is this intentional?", NAME_CURRENT_COMP);
 }
+
+p_flag = all_set(2, pmin, pmax) ? 3 : is_set(p_max) ? 2 : is_set(p_min) ? 1: 0;
 %}
 
 TRACE
 %{
 int ok;
 ok = 1;
-double tx, ty, tz, tvx, tvy, tvz, tt;
-tx = x;
-ty = y;
-tz = z;
-tvx = vx;
-tvy = vy;
-tvz = vz;
-tt = t;
 
 
 // Emulate PROP_Z0 -- but propagate to z = distance
-double local_dt, local_gx, local_gy, local_gz;
+double local_dt=0, local_gx=0, local_gy=0, local_gz=0;
 if (mcgravitation){
   Coords local_g;
   local_g = rot_apply(ROT_A_CURRENT_COMP, coords_set(0, -GRAVITY, 0));
   coords_get(local_g, &local_gx, &local_gy, &local_gz);
-} else {
-  local_gz = 0;
-  local_gy = 0;
-  local_gz = 0;
 }
 // solve_2nd_order is OK with local_gz == 0
 if (solve_2nd_order(&local_dt, NULL, -local_gz/2, -vz, distance-z)) {
@@ -95,8 +98,15 @@ if (solve_2nd_order(&local_dt, NULL, -local_gz/2, -vz, distance-z)) {
 } else {
   ok = 0;
 }
+
+int geometric_flag = !isradial ? (x < xmin || x > xmax || y < ymin || y > ymax) : (x * x + y * y > radius * radius);
+int weight_flag = 0;
+if (p_flag) {
+  if ((p_flag & 2) && p > pmax) weight_flag = 1;
+  if ((p_flag & 1) && p < pmin) weight_flag = 1;
+}
   
-if (!isradial ? (x < xmin || x > xmax || y < ymin || y > ymax) : (x * x + y * y > radius * radius)){
+if (geometric_flag || weight_flag)){
   if (accept && rand01() < accept) {
     // this particle is outside of our filter, but we let it pass
     // since we only take N-percent (N = 100 * accept) we increase
@@ -107,14 +117,6 @@ if (!isradial ? (x < xmin || x > xmax || y < ymin || y > ymax) : (x * x + y * y 
   }
 }
 if (ok) {
-  // rewind time to the initial configuration
-  x = tx;
-  y = ty;
-  z = tz;
-  t = tt;
-  vx = tvx;
-  vy = tvy;
-  vz = tvz;
   SCATTER;
 } else {
   ABSORB;
